@@ -1,172 +1,258 @@
-import logging
-import random
-import nltk
-nltk.download('words')
-from nltk.corpus import words
+import logging, asyncio, os
 from telegram import Update
-from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
+from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes
 from pymongo import MongoClient
-import os
 
-# Setup logging
-logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
+# MongoDB setup
+client = MongoClient("mongodb+srv://karinuzumaki0007:rwro5SJzPU2js4Eg@cluster0.aczm0tm.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0")
+db = client["word_chain_bot"]
+games = db["games"]
 
-BOT_TOKEN = "7510117884:AAHjoZRQRg9MBNow7wdYlYgN9BAR2sbnHd0"
-WEBHOOK_DOMAIN = "https://frequent-hedy-rahulgaikwad27.koyeb.app"
-MONGO_URI = "mongodb+srv://karinuzumaki0007:rwro5SJzPU2js4Eg@cluster0.aczm0tm.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0"
+# Logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
-client = MongoClient(MONGO_URI)
-db = client["word_chain_game"]
-game_state = db["game_state"]
-players = db["players"]
-scores = db["scores"]
-used_words = db["used_words"]
+# Load valid English words
+with open("words.txt", "r") as f:
+    valid_words = set(word.strip().lower() for word in f)
 
-ENGLISH_WORDS = set(w.lower() for w in words.words())
+def is_valid_word(word):
+    return word.lower() in valid_words
 
-# --- Handlers ---
+def get_game(chat_id):
+    game = games.find_one({"chat_id": chat_id})
+    if not game:
+        game = {
+            "chat_id": chat_id,
+            "used_words": [],
+            "players": [],
+            "current_turn": 0,
+            "last_letter": None,
+            "scores": {},
+            "warnings": {},
+            "timer_task": None,
+            "turn_time": 30,
+            "min_length": 3
+        }
+        games.insert_one(game)
+    return game
+
+def update_game(chat_id, data):
+    games.update_one({"chat_id": chat_id}, {"$set": data})
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("Welcome to Word Chain Game! Use /join to join the game.")
-
-async def join(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
-    user_id = update.effective_user.id
-    username = update.effective_user.first_name
+    user = update.effective_user
 
-    if players.find_one({"chat_id": chat_id, "user_id": user_id}):
-        await update.message.reply_text(f"{username}, you already joined.")
-        return
+    game = get_game(chat_id)
+    if user.id not in game["players"]:
+        game["players"].append(user.id)
+        game["scores"][str(user.id)] = 0
+        game["warnings"][str(user.id)] = 0
+        update_game(chat_id, {"players": game["players"], "scores": game["scores"], "warnings": game["warnings"]})
 
-    players.insert_one({"chat_id": chat_id, "user_id": user_id, "username": username})
-    await update.message.reply_text(f"{username} joined the game!")
+    await update.message.reply_text(f"{user.first_name} joined! Total players: {len(game['players'])}")
 
-async def start_game(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if len(game["players"]) == 1:
+        await start_turn_timer(chat_id, context)
+
+async def word(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
-    joined_players = list(players.find({"chat_id": chat_id}))
+    user = update.effective_user
+    text = update.message.text.lower().strip()
 
-    if len(joined_players) < 2:
-        await update.message.reply_text("At least 2 players needed to start the game.")
-        return
+    if not text.isalpha():
+        return await update.message.reply_text("Send a valid word (letters only).")
 
-    first_word = random.choice(list(ENGLISH_WORDS))
-    game_state.update_one(
-        {"chat_id": chat_id},
-        {"$set": {
-            "last_word": first_word,
-            "turn_index": 0
-        }}, upsert=True
-    )
-    used_words.delete_many({"chat_id": chat_id})
-    used_words.insert_one({"chat_id": chat_id, "word": first_word})
+    game = get_game(chat_id)
 
-    first_player = joined_players[0]
+    if user.id not in game["players"]:
+        return await update.message.reply_text("You're not part of the game. Use /start to join.")
+
+    if game["players"][game["current_turn"]] != user.id:
+        return await update.message.reply_text("It's not your turn!")
+
+    if text in game["used_words"]:
+        return await update.message.reply_text("This word has already been used!")
+
+    if not is_valid_word(text):
+        return await update.message.reply_text("Invalid English word.")
+
+    if game["last_letter"] and not text.startswith(game["last_letter"]):
+        return await update.message.reply_text(f"Word must start with '{game['last_letter']}'.")
+
+    if len(text) < game.get("min_length", 3):
+        return await update.message.reply_text(f"Word must be at least {game['min_length']} letters long.")
+
+    # Cancel existing timer
+    if game.get("timer_task"):
+        context.job_queue.get_jobs_by_name(f"turn_timer_{chat_id}")[0].schedule_removal()
+
+    # Update state
+    game["used_words"].append(text)
+    game["last_letter"] = text[-1]
+    game["scores"][str(user.id)] += 1
+    game["current_turn"] = (game["current_turn"] + 1) % len(game["players"])
+
+    # Dynamic timer and length
+    word_count = len(game["used_words"])
+    game["turn_time"] = max(5, 30 - (word_count // 10) * 5)
+    game["min_length"] = min(10, 3 + (word_count // 7))
+
+    update_game(chat_id, {
+        "used_words": game["used_words"],
+        "last_letter": game["last_letter"],
+        "scores": game["scores"],
+        "current_turn": game["current_turn"],
+        "turn_time": game["turn_time"],
+        "min_length": game["min_length"]
+    })
+
+    next_id = game["players"][game["current_turn"]]
+    next_user = await context.bot.get_chat_member(chat_id, next_id)
+
     await update.message.reply_text(
-        f"Game started! First word: *{first_word}*\n{first_player['username']}'s turn.",
-        parse_mode="Markdown")
-
-async def word_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not update.message or not update.message.text:
-        return
-
-    chat_id = update.effective_chat.id
-    user_id = update.effective_user.id
-    username = update.effective_user.first_name
-    word = update.message.text.strip().lower()
-
-    game = game_state.find_one({"chat_id": chat_id})
-    if not game:
-        return
-
-    all_players = list(players.find({"chat_id": chat_id}))
-    if not any(p["user_id"] == user_id for p in all_players):
-        return
-
-    current_turn_index = game.get("turn_index", 0)
-    current_player = all_players[current_turn_index % len(all_players)]
-    if user_id != current_player["user_id"]:
-        await update.message.reply_text(f"Wait for your turn, {username}!")
-        return
-
-    last_word = game.get("last_word")
-    if word in [w['word'] for w in used_words.find({"chat_id": chat_id})]:
-        await update.message.reply_text("This word has already been used!")
-        return
-
-    if word not in ENGLISH_WORDS:
-        await update.message.reply_text("That's not a valid English word!")
-        return
-
-    if word[0] != last_word[-1]:
-        await update.message.reply_text(f"Your word must start with '{last_word[-1]}'!")
-        return
-
-    scores.update_one(
-        {"chat_id": chat_id, "user_id": user_id},
-        {"$inc": {"score": 1}, "$set": {"username": username}},
-        upsert=True
+        f"✅ {user.first_name} scored! Word: {text}\nNext letter: {text[-1].upper()}\n🔁 {next_user.user.first_name}'s turn!"
     )
-    used_words.insert_one({"chat_id": chat_id, "word": word})
 
-    game_state.update_one({"chat_id": chat_id}, {"$set": {
-        "last_word": word,
-        "turn_index": (current_turn_index + 1) % len(all_players)
-    }})
+    await start_turn_timer(chat_id, context)
 
-    next_player = all_players[(current_turn_index + 1) % len(all_players)]
-    await update.message.reply_text(f"✅ Good word!\nNext: {next_player['username']}")
+async def turn_timeout(context: ContextTypes.DEFAULT_TYPE):
+    chat_id = int(context.job.name.split("_")[-1])
+    game = get_game(chat_id)
+
+    user_id = game["players"][game["current_turn"]]
+    user_warning_count = game["warnings"].get(str(user_id), 0) + 1
+
+    if user_warning_count >= 3:
+        game["players"].remove(user_id)
+        del game["scores"][str(user_id)]
+        del game["warnings"][str(user_id)]
+        msg = f"⚠️ Player <a href='tg://user?id={user_id}'>removed</a> for 3 missed turns!"
+    else:
+        game["warnings"][str(user_id)] = user_warning_count
+        game["current_turn"] = (game["current_turn"] + 1) % len(game["players"])
+        msg = f"⚠️ <a href='tg://user?id={user_id}'>missed their turn</a>! Warning {user_warning_count}/3."
+
+    update_game(chat_id, {
+        "players": game["players"],
+        "current_turn": game["current_turn"],
+        "scores": game["scores"],
+        "warnings": game["warnings"]
+    })
+
+    await context.bot.send_message(chat_id, msg, parse_mode="HTML")
+
+    if game["players"]:
+        await start_turn_timer(chat_id, context)
+
+async def start_turn_timer(chat_id, context: ContextTypes.DEFAULT_TYPE):
+    game = get_game(chat_id)
+    turn_time = game.get("turn_time", 30)
+
+    context.job_queue.run_once(
+        turn_timeout,
+        turn_time,
+        name=f"turn_timer_{chat_id}",
+        chat_id=chat_id
+    )
+
+    current_id = game["players"][game["current_turn"]]
+    user = await context.bot.get_chat_member(chat_id, current_id)
+    await context.bot.send_message(
+        chat_id,
+        f"⏳ {user.user.first_name}, your turn! You have {turn_time} seconds."
+    )
 
 async def score(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
-    all_scores = list(scores.find({"chat_id": chat_id}).sort("score", -1))
-    if not all_scores:
-        await update.message.reply_text("No scores yet.")
-        return
-
-    msg = "🏆 Scores:\n"
-    for s in all_scores:
-        msg += f"{s['username']}: {s['score']}\n"
+    game = get_game(chat_id)
+    scores = game.get("scores", {})
+    if not scores:
+        return await update.message.reply_text("No scores yet.")
+    msg = "🏆 Group Scores:\n"
+    for uid, score in scores.items():
+        try:
+            user = await context.bot.get_chat_member(chat_id, int(uid))
+            msg += f"{user.user.first_name}: {score}\n"
+        except:
+            msg += f"User {uid}: {score}\n"
     await update.message.reply_text(msg)
+
+async def leaderboard(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    all_scores = games.find({}, {"scores": 1})
+    global_scores = {}
+    for game in all_scores:
+        for uid, score in game.get("scores", {}).items():
+            global_scores[uid] = global_scores.get(uid, 0) + score
+    sorted_scores = sorted(global_scores.items(), key=lambda x: x[1], reverse=True)[:10]
+    msg = "🌍 Global Leaderboard:\n"
+    for idx, (uid, score) in enumerate(sorted_scores, 1):
+        msg += f"{idx}. User {uid}: {score}\n"
+    await update.message.reply_text(msg)
+
+async def status(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    chat_id = update.effective_chat.id
+    game = get_game(chat_id)
+    turn_time = game.get("turn_time", 30)
+    min_length = game.get("min_length", 3)
+    used_words = len(game.get("used_words", []))
+    current_id = game["players"][game["current_turn"]]
+    user = await context.bot.get_chat_member(chat_id, current_id)
+    await update.message.reply_text(
+        f"📊 Game Status:\nTurn Time: {turn_time} seconds\nMin Word Length: {min_length}\nWords Guessed: {used_words}\nCurrent Turn: {user.user.first_name}"
+    )
+
+async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    msg = (
+        "📚 *Word Chain Bot Help*\n"
+        "\n/start - Join or start the game"
+        "\n/score - Show scores in this group"
+        "\n/status - Show current game status"
+        "\n/resetgame - Admins can reset the game"
+        "\n/leaderboard - Global top scores"
+        "\n/help - Show this help message\n"
+        "\nGame Rules:\n- Start with a valid English word."
+        "\n- Next word must start with the last letter of previous."
+        "\n- Minimum word length increases every 7 correct guesses."
+        "\n- You get 30s to play. Timer reduces after 10 correct guesses."
+        "\n- 3 skips and you’re out!"
+    )
+    await update.message.reply_text(msg, parse_mode="Markdown")
 
 async def reset(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
-    game_state.delete_one({"chat_id": chat_id})
-    players.delete_many({"chat_id": chat_id})
-    scores.delete_many({"chat_id": chat_id})
-    used_words.delete_many({"chat_id": chat_id})
-    await update.message.reply_text("Game has been reset!")
+    user = update.effective_user
+    member = await context.bot.get_chat_member(chat_id, user.id)
+    if not member.status in ["administrator", "creator"]:
+        return await update.message.reply_text("Only admins can reset the game.")
+    games.delete_one({"chat_id": chat_id})
+    await update.message.reply_text("🔄 Game has been reset!")
 
-async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("""
-Word Chain Game Rules:
-- Join with /join
-- Start with /startgame
-- Use valid English words
-- Each word must start with the last letter of the previous word
-- Take turns — bot tells you when it's your turn
-- View scores with /score
-- Reset with /resetgame
-""")
+# Webhook version of main()
+async def main():
+    BOT_TOKEN = "7510117884:AAHjoZRQRg9MBNow7wdYlYgN9BAR2sbnHd0"
+    WEBHOOK_DOMAIN = "https://frequent-hedy-rahulgaikwad27-2a4e.koyeb.app"
+    WEBHOOK_PATH = f"/bot{BOT_TOKEN}"
+    PORT = int(os.environ.get("PORT", 8080))
 
-# --- Main ---
-def main():
-    app = Application.builder().token(BOT_TOKEN).build()
+    app = ApplicationBuilder().token(BOT_TOKEN).build()
 
     app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("join", join))
-    app.add_handler(CommandHandler("startgame", start_game))
     app.add_handler(CommandHandler("score", score))
-    app.add_handler(CommandHandler("resetgame", reset))
+    app.add_handler(CommandHandler("status", status))
+    app.add_handler(CommandHandler("leaderboard", leaderboard))
     app.add_handler(CommandHandler("help", help_command))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, word_message))
+    app.add_handler(CommandHandler("resetgame", reset))
+    app.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), word))
 
-    app.bot.set_webhook(f"{WEBHOOK_DOMAIN}/webhook")
-    app.run_webhook(
+    await app.run_webhook(
         listen="0.0.0.0",
-        port=int(os.environ.get("PORT", 8080)),
-        webhook_url=f"{WEBHOOK_DOMAIN}/webhook"
+        port=PORT,
+        webhook_path=WEBHOOK_PATH,
+        webhook_url=f"{WEBHOOK_DOMAIN}{WEBHOOK_PATH}"
     )
 
-if __name__ == '__main__':
-    main()
+if __name__ == "__main__":
+    asyncio.run(main())
     
