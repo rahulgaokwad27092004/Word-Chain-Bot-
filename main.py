@@ -150,7 +150,7 @@ Word Chain Game Rules:
 - Reset with /resetgame
 """)
 
-if __name__ == '__main__':
+async def main():
     app = Application.builder().token(BOT_TOKEN).build()
 
     app.add_handler(CommandHandler("start", start))
@@ -161,12 +161,14 @@ if __name__ == '__main__':
     app.add_handler(CommandHandler("help", help_command))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, word_message))
 
-    import asyncio
-    asyncio.run(app.bot.set_webhook(f"{WEBHOOK_DOMAIN}/webhook"))
+    await app.bot.set_webhook(f"{WEBHOOK_DOMAIN}/webhook")
 
-    app.run_webhook(
+    await app.run_webhook(
         listen="0.0.0.0",
         port=int(os.environ.get("PORT", 8080)),
         webhook_url=f"{WEBHOOK_DOMAIN}/webhook"
-)
-            
+    )
+
+if __name__ == '__main__':
+    import asyncio
+    asyncio.run(main())
