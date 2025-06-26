@@ -3,20 +3,19 @@ import random
 import nltk
 nltk.download('words')
 from nltk.corpus import words
-from telegram import Update, ForceReply
+from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
 from pymongo import MongoClient
 import os
+import asyncio
 
 # Setup logging
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 
-# Telegram bot token and webhook domain
 BOT_TOKEN = "7510117884:AAHjoZRQRg9MBNow7wdYlYgN9BAR2sbnHd0"
-WEBHOOK_DOMAIN = "https://your-app-name.koyeb.app"  # <- Replace this before deploy
+WEBHOOK_DOMAIN = "https://frequent-hedy-rahulgaikwad27.koyeb.app"
 MONGO_URI = "mongodb+srv://karinuzumaki0007:rwro5SJzPU2js4Eg@cluster0.aczm0tm.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0"
 
-# MongoDB setup
 client = MongoClient(MONGO_URI)
 db = client["word_chain_game"]
 game_state = db["game_state"]
@@ -24,10 +23,8 @@ players = db["players"]
 scores = db["scores"]
 used_words = db["used_words"]
 
-# Load English words
 ENGLISH_WORDS = set(w.lower() for w in words.words())
 
-# Commands
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("Welcome to Word Chain Game! Use /join to join the game.")
 
@@ -150,24 +147,24 @@ Word Chain Game Rules:
 - Reset with /resetgame
 """)
 
-app = Application.builder().token(BOT_TOKEN).build()
+async def main():
+    app = Application.builder().token(BOT_TOKEN).build()
 
-app.add_handler(CommandHandler("start", start))
-app.add_handler(CommandHandler("join", join))
-app.add_handler(CommandHandler("startgame", start_game))
-app.add_handler(CommandHandler("score", score))
-app.add_handler(CommandHandler("resetgame", reset))
-app.add_handler(CommandHandler("help", help_command))
-app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, word_message))
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("join", join))
+    app.add_handler(CommandHandler("startgame", start_game))
+    app.add_handler(CommandHandler("score", score))
+    app.add_handler(CommandHandler("resetgame", reset))
+    app.add_handler(CommandHandler("help", help_command))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, word_message))
 
-import asyncio
-async def setup():
     await app.bot.set_webhook(f"{WEBHOOK_DOMAIN}/webhook")
+    await app.run_webhook(
+        listen="0.0.0.0",
+        port=int(os.environ.get("PORT", 8080)),
+        webhook_url=f"{WEBHOOK_DOMAIN}/webhook"
+    )
 
-asyncio.run(setup())
-
-app.run_webhook(
-    listen="0.0.0.0",
-    port=int(os.environ.get("PORT", 8080)),
-    webhook_url=f"{WEBHOOK_DOMAIN}/webhook"
-)
+if __name__ == '__main__':
+    asyncio.run(main())
+    
