@@ -1,3 +1,2 @@
-python-telegram-bot[webhooks]==20.0
-pymongo
-nltk
+python-telegram-bot[webhooks]
+motor
