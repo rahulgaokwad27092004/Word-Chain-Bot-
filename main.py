@@ -243,12 +243,10 @@ async def main():
     app.add_handler(CommandHandler("resetgame", reset))
     app.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), word))
 
-    await app.run_webhook(
-    listen="0.0.0.0",
-    port=PORT,
-    url_path=f"bot{BOT_TOKEN}",
-    webhook_url=f"{WEBHOOK_DOMAIN}/bot{BOT_TOKEN}"
-)
+    await app.initialize()
+await app.start()
+await app.bot.set_webhook(f"{WEBHOOK_DOMAIN}/bot{BOT_TOKEN}")
+await asyncio.Event().wait()
 
 if __name__ == "__main__":
     loop = asyncio.new_event_loop()
