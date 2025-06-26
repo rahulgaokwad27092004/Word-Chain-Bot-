@@ -7,7 +7,6 @@ from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
 from pymongo import MongoClient
 import os
-import asyncio
 
 # Setup logging
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
@@ -24,6 +23,8 @@ scores = db["scores"]
 used_words = db["used_words"]
 
 ENGLISH_WORDS = set(w.lower() for w in words.words())
+
+# --- Handlers ---
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("Welcome to Word Chain Game! Use /join to join the game.")
@@ -147,7 +148,8 @@ Word Chain Game Rules:
 - Reset with /resetgame
 """)
 
-async def main():
+# --- Main ---
+def main():
     app = Application.builder().token(BOT_TOKEN).build()
 
     app.add_handler(CommandHandler("start", start))
@@ -158,13 +160,13 @@ async def main():
     app.add_handler(CommandHandler("help", help_command))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, word_message))
 
-    await app.bot.set_webhook(f"{WEBHOOK_DOMAIN}/webhook")
-    await app.run_webhook(
+    app.bot.set_webhook(f"{WEBHOOK_DOMAIN}/webhook")
+    app.run_webhook(
         listen="0.0.0.0",
         port=int(os.environ.get("PORT", 8080)),
         webhook_url=f"{WEBHOOK_DOMAIN}/webhook"
     )
 
 if __name__ == '__main__':
-    asyncio.run(main())
+    main()
     
