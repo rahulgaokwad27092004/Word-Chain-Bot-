@@ -113,8 +113,7 @@ async def word_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     }})
 
     next_player = all_players[(current_turn_index + 1) % len(all_players)]
-    await update.message.reply_text(f"✅ Good word!
-Next: {next_player['username']}")
+    await update.message.reply_text(f"✅ Good word!\nNext: {next_player['username']}")
 
 async def score(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
@@ -170,3 +169,4 @@ async def main():
 if __name__ == '__main__':
     import asyncio
     asyncio.run(main())
+    
