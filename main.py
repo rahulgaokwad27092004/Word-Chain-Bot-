@@ -84,17 +84,14 @@ async def word(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if len(text) < game.get("min_length", 3):
         return await update.message.reply_text(f"Word must be at least {game['min_length']} letters long.")
 
-    # Cancel existing timer
     if game.get("timer_task"):
         context.job_queue.get_jobs_by_name(f"turn_timer_{chat_id}")[0].schedule_removal()
 
-    # Update state
     game["used_words"].append(text)
     game["last_letter"] = text[-1]
     game["scores"][str(user.id)] += 1
     game["current_turn"] = (game["current_turn"] + 1) % len(game["players"])
 
-    # Dynamic timer and length
     word_count = len(game["used_words"])
     game["turn_time"] = max(5, 30 - (word_count // 10) * 5)
     game["min_length"] = min(10, 3 + (word_count // 7))
@@ -231,9 +228,9 @@ async def reset(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # Webhook version of main()
 async def main():
-    BOT_TOKEN = "7510117884:AAHjoZRQRg9MBNow7wdYlYgN9BAR2sbnHd0"
-    WEBHOOK_DOMAIN = "https://frequent-hedy-rahulgaikwad27-2a4e.koyeb.app"
-    WEBHOOK_PATH = f"/bot{BOT_TOKEN}"
+    BOT_TOKEN = "7510117884:AAHjoZRQRg9MBNow7wdYlYgN9BAR2sbnHd0"  # Replace with actual token if needed
+    WEBHOOK_DOMAIN = "https://frequent-hedy-rahulgaikwad27-2a4e.koyeb.app"  # Replace with actual Koyeb domain
+    WEBHOOK_PATH = f"/bot7510117884:AAHjoZRQRg9MBNow7wdYlYgN9BAR2sbnHd0"
     PORT = int(os.environ.get("PORT", 8080))
 
     app = ApplicationBuilder().token(BOT_TOKEN).build()
@@ -247,12 +244,12 @@ async def main():
     app.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), word))
 
     await app.run_webhook(
-        listen="0.0.0.0",
-        port=PORT,
-        webhook_path=WEBHOOK_PATH,
-        webhook_url=f"{WEBHOOK_DOMAIN}{WEBHOOK_PATH}"
-    )
+    listen="0.0.0.0",
+    port=PORT,
+    url_path=f"bot{BOT_TOKEN}",
+    webhook_url=f"{WEBHOOK_DOMAIN}/bot{BOT_TOKEN}"
+)
 
 if __name__ == "__main__":
     asyncio.run(main())
-    
+            
