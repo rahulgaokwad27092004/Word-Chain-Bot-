@@ -228,6 +228,22 @@ async def reset(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # Webhook version of main()
 async def main():
+    # Setup MongoDB
+    db_client = motor.motor_asyncio.AsyncIOMotorClient(MONGO_URI)
+    db = db_client["word_chain_bot"]
+
+    # Load dictionary
+    with open("words.txt", "r") as f:
+        word_list = set(w.strip().lower() for w in f)
+
+    # Setup Application
+    app = Application.builder().token(BOT_TOKEN).build()
+
+    # Register all your handlers here
+    app.add_handler(CommandHandler("start", start))
+    # Add your other handlers here as needed
+
+    # Webhook startup
     await app.initialize()
     await app.start()
     await app.bot.set_webhook(f"{WEBHOOK_DOMAIN}/bot{BOT_TOKEN}")
@@ -256,4 +272,3 @@ if __name__ == "__main__":
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
     loop.run_until_complete(main())
-    
