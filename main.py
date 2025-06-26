@@ -1,5 +1,8 @@
 import logging
 import random
+import nltk
+nltk.download('words')
+from nltk.corpus import words
 from telegram import Update, ForceReply
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
 from pymongo import MongoClient
@@ -21,8 +24,8 @@ players = db["players"]
 scores = db["scores"]
 used_words = db["used_words"]
 
-# Simple built-in dictionary for testing
-ENGLISH_WORDS = set(w.strip().lower() for w in open("/usr/share/dict/words") if w.strip().isalpha())
+# Load English words
+ENGLISH_WORDS = set(w.lower() for w in words.words())
 
 # Commands
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -169,4 +172,3 @@ async def main():
 if __name__ == '__main__':
     import asyncio
     asyncio.run(main())
-    
