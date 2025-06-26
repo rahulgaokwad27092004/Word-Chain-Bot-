@@ -228,6 +228,10 @@ async def reset(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # Webhook version of main()
 async def main():
+    await app.initialize()
+    await app.start()
+    await app.bot.set_webhook(f"{WEBHOOK_DOMAIN}/bot{BOT_TOKEN}")
+    await asyncio.Event().wait()
     BOT_TOKEN = "7510117884:AAHjoZRQRg9MBNow7wdYlYgN9BAR2sbnHd0"  # Replace with actual token if needed
     WEBHOOK_DOMAIN = "https://frequent-hedy-rahulgaikwad27-2a4e.koyeb.app"  # Replace with actual Koyeb domain
     WEBHOOK_PATH = f"/bot7510117884:AAHjoZRQRg9MBNow7wdYlYgN9BAR2sbnHd0"
@@ -252,3 +256,4 @@ if __name__ == "__main__":
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
     loop.run_until_complete(main())
+    
